@@ -20,6 +20,7 @@ func (a *App) handle(verb, path string, handle func(c *Context) error) {
 			Resp:      w,
 			Req:       r,
 			Params:    Params(ps),
+			Session:   a.session,
 		}); err != nil {
 			panic(err)
 		}

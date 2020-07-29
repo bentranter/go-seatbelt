@@ -15,14 +15,16 @@ type Params httprouter.Params
 type Context struct {
 	templates map[string]*template.Template
 
-	Resp   http.ResponseWriter
-	Req    *http.Request
-	Params Params
+	Resp    http.ResponseWriter
+	Req     *http.Request
+	Params  Params
+	Session *session
 }
 
 // An App is contains the data necessary to start and run an application.
 type App struct {
 	// Dependencies for populating a Context on each request.
+	session   *session
 	templates map[string]*template.Template
 
 	// App specific dependencies.
@@ -35,14 +37,12 @@ type App struct {
 type Config struct {
 	// Dir is the directory containing your Go HTML templates.
 	Dir string
-
-	// Test defines whether or not to start the app in test mode.
-	Test bool
 }
 
 // New creates a new instance of an App.
 func New(config Config) *App {
 	return &App{
+		session:    newSession(),
 		templates:  parseTemplates(config.Dir),
 		middleware: make([]func(http.Handler) http.Handler, 0),
 		router:     httprouter.New(),
