@@ -1,8 +1,10 @@
 package seatbelt
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/gertd/go-pluralize"
 	"github.com/julienschmidt/httprouter"
@@ -16,11 +18,12 @@ func (a *App) handle(verb, path string, handle func(c *Context) error) {
 
 	a.router.Handle(verb, path, httprouter.Handle(func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		if err := handle(&Context{
-			templates: a.templates,
-			Resp:      w,
-			Req:       r,
-			Params:    Params(ps),
-			Session:   a.session,
+			templates:     a.templates,
+			sessionCookie: a.cookie,
+			flashCookie:   a.cookie,
+			Resp:          w,
+			Req:           r,
+			Params:        Params(ps),
 		}); err != nil {
 			panic(err)
 		}
@@ -56,7 +59,27 @@ func (a *App) Delete(path string, handle func(c *Context) error) {
 }
 
 func (a *App) Routes() string {
-	return ""
+	buf := &bytes.Buffer{}
+	w := tabwriter.NewWriter(buf, 1, 4, 1, ' ', 0)
+
+	w.Write([]byte("Prefix\t"))
+	w.Write([]byte("Verb\t"))
+	w.Write([]byte("URI Pattern\n"))
+
+	for _, r := range a.routes {
+		w.Write([]byte(r.prefix))
+		w.Write([]byte("\t"))
+		w.Write([]byte(r.verb))
+		w.Write([]byte("\t"))
+		w.Write([]byte(r.pattern))
+		w.Write([]byte("\n"))
+	}
+
+	if err := w.Flush(); err != nil {
+		panic(err)
+	}
+
+	return buf.String()
 }
 
 var inflect = pluralize.NewClient()

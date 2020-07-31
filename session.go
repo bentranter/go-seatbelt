@@ -1,78 +1,59 @@
 package seatbelt
 
 import (
-	"encoding/hex"
 	"net/http"
 	"strings"
-
-	"github.com/gorilla/securecookie"
+	"time"
 )
 
-// A session stores key value pairs on an HTTP cookie.
-type session struct {
-	sc   *securecookie.SecureCookie
-	name string
-}
-
-// NewSession creates a new instance of a session store.
-//
-// TODO Obviously don't hardcode secret session keys!
-func newSession() *session {
-	const hashKey = "96f567cab5f00312c562c31156fb7c870e9ac4d560f7bdb7a61e34b2453b9b4155363b313f98c87f8aae9152203a54546aee310cab208e5c09fc6f999414a3d6"
-	const blockKey = "08d611a5f0df41d353c61300d8c28febf864d445126f1ccacfe0fc9db3c00268"
-
-	hash, err := hex.DecodeString(hashKey)
-	if err != nil {
-		panic(err)
-	}
-	block, err := hex.DecodeString(blockKey)
-	if err != nil {
-		panic(err)
-	}
-
-	return &session{
-		sc:   securecookie.New(hash, block),
-		name: "_megandoodle_session",
-	}
-}
-
-// Save saves an arbitrary key-value pair on a session.
-func (s *session) Save(w http.ResponseWriter, r *http.Request, key string, value interface{}) {
+// saveSession saves an arbitrary key-value pair on a session with the given
+// cookie name.
+func (c *Context) saveSession(cookieName, key string, value interface{}) {
 	values := make(map[string]interface{})
 
 	// Atempt to decode the existing session key value pairs before creating
 	// new ones.
-	cookie, err := r.Cookie(s.name)
+	cookie, err := c.Req.Cookie(cookieName)
 	if err == nil {
-		s.sc.Decode(s.name, cookie.Value, &values)
+		c.sessionCookie.Decode(cookieName, cookie.Value, &values)
 	}
 
 	values[key] = value
 
-	encoded, err := s.sc.Encode(s.name, values)
+	encoded, err := c.sessionCookie.Encode(cookieName, values)
 	if err != nil {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     s.name,
+	http.SetCookie(c.Resp, &http.Cookie{
+		Name:     cookieName,
 		Value:    encoded,
 		Path:     "/",
-		Secure:   IsTLS(r),
+		Secure:   isTLS(c.Req),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
 }
 
-// Get retrieves the value with the given key from a session.
-func (s *session) Get(r *http.Request, key string) string {
-	cookie, err := r.Cookie(s.name)
+// SaveSession saves an arbitrary key-value pair on a session.
+func (c *Context) SaveSession(key string, value interface{}) {
+	c.saveSession(sessionCookieName, key, value)
+}
+
+// Flash sets a flash message with the given key and value.
+func (c *Context) Flash(key, value string) {
+	c.saveSession(flashCookieName, key, value)
+}
+
+// GetSession retrieves the value with the given key from a session.
+func (c *Context) GetSession(key string) string {
+	cookie, err := c.Req.Cookie(sessionCookieName)
 	if err != nil {
 		return ""
 	}
 
 	values := make(map[string]interface{})
-	if err := s.sc.Decode(s.name, cookie.Value, &values); err != nil {
+	if err := c.sessionCookie.Decode(sessionCookieName, cookie.Value, &values); err != nil {
 		return ""
 	}
 
@@ -89,15 +70,47 @@ func (s *session) Get(r *http.Request, key string) string {
 	return str
 }
 
-// GetInt64 retrieves the value with the given key from a session.
-func (s *session) GetInt64(r *http.Request, key string) int64 {
-	cookie, err := r.Cookie(s.name)
+// Flashes returns a map of all flash messages.
+func (c *Context) Flashes() map[string]string {
+	flashes := make(map[string]string)
+
+	cookie, err := c.Req.Cookie(flashCookieName)
+	if err != nil {
+		return flashes
+	}
+
+	values := make(map[string]interface{})
+	if err := c.flashCookie.Decode(flashCookieName, cookie.Value, &values); err != nil {
+		return flashes
+	}
+
+	for k, v := range values {
+		flashes[k] = v.(string)
+	}
+
+	http.SetCookie(c.Resp, &http.Cookie{
+		Name:     flashCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Expires:  time.Unix(1, 0),
+		Secure:   isTLS(c.Req),
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	return flashes
+}
+
+// GetSessionInt64 retrieves the value with the given key from a session.
+func (c *Context) GetSessionInt64(key string) int64 {
+	cookie, err := c.Req.Cookie(sessionCookieName)
 	if err != nil {
 		return 0
 	}
 
 	values := make(map[string]interface{})
-	if err := s.sc.Decode(s.name, cookie.Value, &values); err != nil {
+	if err := c.sessionCookie.Decode(sessionCookieName, cookie.Value, &values); err != nil {
 		return 0
 	}
 
@@ -114,30 +127,30 @@ func (s *session) GetInt64(r *http.Request, key string) int64 {
 	return num
 }
 
-// Delete deletes the key value pair from the session if it exists.
-func (s *session) Delete(w http.ResponseWriter, r *http.Request, key string) {
-	cookie, err := r.Cookie(s.name)
+// DeleteSession deletes the key value pair from the session if it exists.
+func (c *Context) DeleteSession(key string) {
+	cookie, err := c.Req.Cookie(sessionCookieName)
 	if err != nil {
 		return
 	}
 
 	values := make(map[string]interface{})
-	if err := s.sc.Decode(s.name, cookie.Value, &values); err != nil {
+	if err := c.sessionCookie.Decode(sessionCookieName, cookie.Value, &values); err != nil {
 		return
 	}
 
 	delete(values, key)
 
-	encoded, err := s.sc.Encode(s.name, values)
+	encoded, err := c.sessionCookie.Encode(sessionCookieName, values)
 	if err != nil {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     s.name,
+	http.SetCookie(c.Resp, &http.Cookie{
+		Name:     sessionCookieName,
 		Value:    encoded,
 		Path:     "/",
-		Secure:   isTLS(r),
+		Secure:   isTLS(c.Req),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
