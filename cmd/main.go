@@ -7,12 +7,15 @@ import (
 )
 
 func handle(c *seatbelt.Context) error {
-	c.Flash("message", "hello, world!")
 	return c.Render(200, "index", nil)
 }
 
 func products(c *seatbelt.Context) error {
-	return c.Render(200, "products/show", c.Flashes())
+	return c.Render(200, "products/show", nil)
+}
+
+func redirector(c *seatbelt.Context) error {
+	return c.Redirect("/", "message", "You've been redirected")
 }
 
 func main() {
@@ -22,6 +25,7 @@ func main() {
 
 	app.Get("/", handle)
 	app.Get("/products", products)
+	app.Get("/redirect", redirector)
 
 	log.Fatalln(app.Start(":3000"))
 }

@@ -6,6 +6,9 @@
   <title>{{ block "title" . }}Layout{{ end }}</title>
 </head>
 <body>
+  {{ range $key, $value := flashes -}}
+  <div class="flash-{{ $key }}">{{ $value }}</div>
+  {{- end }}
   {{ block "content" . }}{{ end }}
 </body>
 </html>

@@ -9,24 +9,39 @@ import (
 	"github.com/julienschmidt/httprouter"
 )
 
-const (
-	sessionCookieName = "_seatbelt_session"
-	flashCookieName   = "_seatbelt_flash"
-)
-
 // Params is an alias for httprouter's params.
 type Params httprouter.Params
 
 // Context contains values present during the lifetime of an HTTP
 // request/response cycle.
 type Context struct {
-	templates     map[string]*template.Template
-	sessionCookie *securecookie.SecureCookie
-	flashCookie   *securecookie.SecureCookie
+	templates map[string]*template.Template
 
-	Resp   http.ResponseWriter
-	Req    *http.Request
-	Params Params
+	Resp    http.ResponseWriter
+	Req     *http.Request
+	Params  Params
+	Session *session
+	Flash   *flash
+}
+
+// Redirect issues a 302 redirect. If a flash message is provided, the first
+// string is the flash key, and the second is the value.
+func (c *Context) Redirect(url string, flash ...string) error {
+	key := ""
+	value := ""
+
+	for i, f := range flash {
+		if i%2 == 0 {
+			key = f
+		} else {
+			value = f
+		}
+
+		c.Flash.Save(key, value)
+	}
+
+	http.Redirect(c.Resp, c.Req, url, http.StatusFound)
+	return nil
 }
 
 // An App is contains the data necessary to start and run an application.

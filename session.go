@@ -3,57 +3,53 @@ package seatbelt
 import (
 	"net/http"
 	"strings"
-	"time"
+
+	"github.com/gorilla/securecookie"
 )
 
-// saveSession saves an arbitrary key-value pair on a session with the given
+type session struct {
+	w    http.ResponseWriter
+	r    *http.Request
+	s    *securecookie.SecureCookie
+	name string
+}
+
+// Save saves an arbitrary key-value pair on a session with the given
 // cookie name.
-func (c *Context) saveSession(cookieName, key string, value interface{}) {
+func (s *session) Save(key string, value interface{}) {
 	values := make(map[string]interface{})
 
-	// Atempt to decode the existing session key value pairs before creating
-	// new ones.
-	cookie, err := c.Req.Cookie(cookieName)
+	cookie, err := s.r.Cookie(s.name)
 	if err == nil {
-		c.sessionCookie.Decode(cookieName, cookie.Value, &values)
+		s.s.Decode(s.name, cookie.Value, &values)
 	}
 
 	values[key] = value
 
-	encoded, err := c.sessionCookie.Encode(cookieName, values)
+	encoded, err := s.s.Encode(s.name, values)
 	if err != nil {
 		return
 	}
 
-	http.SetCookie(c.Resp, &http.Cookie{
-		Name:     cookieName,
+	http.SetCookie(s.w, &http.Cookie{
+		Name:     s.name,
 		Value:    encoded,
 		Path:     "/",
-		Secure:   isTLS(c.Req),
+		Secure:   isTLS(s.r),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
 }
 
-// SaveSession saves an arbitrary key-value pair on a session.
-func (c *Context) SaveSession(key string, value interface{}) {
-	c.saveSession(sessionCookieName, key, value)
-}
-
-// Flash sets a flash message with the given key and value.
-func (c *Context) Flash(key, value string) {
-	c.saveSession(flashCookieName, key, value)
-}
-
-// GetSession retrieves the value with the given key from a session.
-func (c *Context) GetSession(key string) string {
-	cookie, err := c.Req.Cookie(sessionCookieName)
+// Get retrieves the value with the given key from a session.
+func (s *session) Get(key string) string {
+	cookie, err := s.r.Cookie(s.name)
 	if err != nil {
 		return ""
 	}
 
 	values := make(map[string]interface{})
-	if err := c.sessionCookie.Decode(sessionCookieName, cookie.Value, &values); err != nil {
+	if err := s.s.Decode(s.name, cookie.Value, &values); err != nil {
 		return ""
 	}
 
@@ -70,47 +66,15 @@ func (c *Context) GetSession(key string) string {
 	return str
 }
 
-// Flashes returns a map of all flash messages.
-func (c *Context) Flashes() map[string]string {
-	flashes := make(map[string]string)
-
-	cookie, err := c.Req.Cookie(flashCookieName)
-	if err != nil {
-		return flashes
-	}
-
-	values := make(map[string]interface{})
-	if err := c.flashCookie.Decode(flashCookieName, cookie.Value, &values); err != nil {
-		return flashes
-	}
-
-	for k, v := range values {
-		flashes[k] = v.(string)
-	}
-
-	http.SetCookie(c.Resp, &http.Cookie{
-		Name:     flashCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		Expires:  time.Unix(1, 0),
-		Secure:   isTLS(c.Req),
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	})
-
-	return flashes
-}
-
 // GetSessionInt64 retrieves the value with the given key from a session.
-func (c *Context) GetSessionInt64(key string) int64 {
-	cookie, err := c.Req.Cookie(sessionCookieName)
+func (s *session) GetSessionInt64(key string) int64 {
+	cookie, err := s.r.Cookie(s.name)
 	if err != nil {
 		return 0
 	}
 
 	values := make(map[string]interface{})
-	if err := c.sessionCookie.Decode(sessionCookieName, cookie.Value, &values); err != nil {
+	if err := s.s.Decode(s.name, cookie.Value, &values); err != nil {
 		return 0
 	}
 
@@ -127,33 +91,38 @@ func (c *Context) GetSessionInt64(key string) int64 {
 	return num
 }
 
-// DeleteSession deletes the key value pair from the session if it exists.
-func (c *Context) DeleteSession(key string) {
-	cookie, err := c.Req.Cookie(sessionCookieName)
+// Delete deletes the key value pair from the session if it exists.
+func (s *session) Delete(key string) {
+	cookie, err := s.r.Cookie(s.name)
 	if err != nil {
 		return
 	}
 
 	values := make(map[string]interface{})
-	if err := c.sessionCookie.Decode(sessionCookieName, cookie.Value, &values); err != nil {
+	if err := s.s.Decode(s.name, cookie.Value, &values); err != nil {
 		return
 	}
 
 	delete(values, key)
 
-	encoded, err := c.sessionCookie.Encode(sessionCookieName, values)
+	encoded, err := s.s.Encode(s.name, values)
 	if err != nil {
 		return
 	}
 
-	http.SetCookie(c.Resp, &http.Cookie{
-		Name:     sessionCookieName,
+	http.SetCookie(s.w, &http.Cookie{
+		Name:     s.name,
 		Value:    encoded,
 		Path:     "/",
-		Secure:   isTLS(c.Req),
+		Secure:   isTLS(s.r),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
+}
+
+// IsTLS returns true if the request was made over HTTPS.
+func (c *Context) IsTLS() bool {
+	return isTLS(c.Req)
 }
 
 // isTLS is a helper to check if a request was performed over HTTPS.

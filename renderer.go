@@ -20,7 +20,11 @@ func parseTemplates(dir string) map[string]*template.Template {
 	templates := make(map[string]*template.Template)
 
 	layout, err := template.New("layout").
-		// TODO: funcs go here and only here
+		Funcs(template.FuncMap{
+			"flashes": func() map[string]string {
+				return make(map[string]string)
+			},
+		}).
 		Parse(string(b))
 	if err != nil {
 		fmt.Println(err)
@@ -70,11 +74,20 @@ func parseTemplates(dir string) map[string]*template.Template {
 }
 
 // Render renders the HTML template with the given data, if any.
-func (c *Context) Render(status int, template string, data interface{}) error {
-	tmpl, ok := c.templates[template]
+func (c *Context) Render(status int, name string, data interface{}) error {
+	tmpl, ok := c.templates[name]
 	if !ok {
-		return errors.New(`template "` + template + `" is not defined`)
+		return errors.New(`template "` + name + `" is not defined`)
 	}
+
+	flashes := c.Flash.All()
+
+	// Override previous func map because Go's templates are weird.
+	tmpl.Funcs(template.FuncMap{
+		"flashes": func() map[string]string {
+			return flashes
+		},
+	})
 
 	c.Resp.WriteHeader(status)
 	return tmpl.ExecuteTemplate(c.Resp, "layout", data)

@@ -18,12 +18,22 @@ func (a *App) handle(verb, path string, handle func(c *Context) error) {
 
 	a.router.Handle(verb, path, httprouter.Handle(func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		if err := handle(&Context{
-			templates:     a.templates,
-			sessionCookie: a.cookie,
-			flashCookie:   a.cookie,
-			Resp:          w,
-			Req:           r,
-			Params:        Params(ps),
+			templates: a.templates,
+			Session: &session{
+				w:    w,
+				r:    r,
+				s:    a.cookie,
+				name: "_seatbelt_session",
+			},
+			Flash: &flash{
+				w:    w,
+				r:    r,
+				f:    a.cookie,
+				name: "_seatbelt_flash",
+			},
+			Resp:   w,
+			Req:    r,
+			Params: Params(ps),
 		}); err != nil {
 			panic(err)
 		}
