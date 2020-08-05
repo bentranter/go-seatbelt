@@ -14,6 +14,21 @@ func products(c *seatbelt.Context) error {
 	return c.Render(200, "products/show", nil)
 }
 
+type product struct {
+	Name  string
+	Price int
+}
+
+func newProduct(c *seatbelt.Context) error {
+	p := &product{}
+
+	if err := c.Params(p); err != nil {
+		return err
+	}
+
+	return c.Render(201, "products/new", p)
+}
+
 func redirector(c *seatbelt.Context) error {
 	return c.Redirect("/", "message", "You've been redirected")
 }
@@ -25,6 +40,7 @@ func main() {
 
 	app.Get("/", handle)
 	app.Get("/products", products)
+	app.Post("/products", newProduct)
 	app.Get("/redirect", redirector)
 
 	log.Fatalln(app.Start(":3000"))
