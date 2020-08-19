@@ -5,7 +5,7 @@ import (
 )
 
 func TestContext(t *testing.T) {
-	fn := func(c *Context) error {
+	fn := func(c Context) error {
 		return c.String("hello, world!")
 	}
 

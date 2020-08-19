@@ -19,9 +19,9 @@ import (
 	"github.com/mitchellh/mapstructure"
 )
 
-type Contexter interface {
+type Context interface {
 	// session methods
-	Get(key string) interface{}
+	Get(key string) string
 	GetInt64(key string) int64
 	Set(key string, value interface{})
 	Delete(key string)
@@ -33,7 +33,7 @@ type Contexter interface {
 	// http convenience
 	Request() *http.Request
 	Header() http.Header
-	Response() *http.Response
+	Response() http.ResponseWriter
 	IsTLS() bool
 	IP() string
 	Params(v interface{}) error
@@ -43,21 +43,24 @@ type Contexter interface {
 	FormFile(name string) (*multipart.FileHeader, error)
 
 	// http response convenience
+	String(s string) error
 	Render(status int, name string, data interface{}) error
 	Redirect(url string, flash ...string) error
 
 	// i18n
-	T(key string) string
+	// T(key string) string
 }
+
+var _ Context = &context{}
 
 const (
 	sessionCookieName = "_seatbelt_session"
 	flashCookieName   = "_seatbelt_flash"
 )
 
-// Context contains values present during the lifetime of an HTTP
+// context contains values present during the lifetime of an HTTP
 // request/response cycle.
-type Context struct {
+type context struct {
 	w http.ResponseWriter
 	r *http.Request
 	p Params
@@ -67,8 +70,8 @@ type Context struct {
 
 // NewTestContext is used to create Contexts for testing. These cannot be used
 // in a real application.
-func NewTestContext(method, path string, body io.Reader, ps Params, t map[string]*template.Template) *Context {
-	return &Context{
+func NewTestContext(method, path string, body io.Reader, ps Params, t map[string]*template.Template) Context {
+	return &context{
 		w: httptest.NewRecorder(),
 		r: httptest.NewRequest("GET", "/", nil),
 		s: securecookie.New(
@@ -83,7 +86,7 @@ func NewTestContext(method, path string, body io.Reader, ps Params, t map[string
 //
 // This serves as a convenience function for saving both session and flash
 // values.
-func (c *Context) set(name string, key string, value interface{}) {
+func (c *context) set(name string, key string, value interface{}) {
 	values := make(map[string]interface{})
 
 	cookie, err := c.r.Cookie(name)
@@ -109,12 +112,12 @@ func (c *Context) set(name string, key string, value interface{}) {
 }
 
 // Set saves a session value on the given key.
-func (c *Context) Set(key string, value interface{}) {
+func (c *context) Set(key string, value interface{}) {
 	c.set(sessionCookieName, key, value)
 }
 
 // get returns the map of key-value pairs in the cookie with the given name.
-func (c *Context) get(name string) map[string]interface{} {
+func (c *context) get(name string) map[string]interface{} {
 	values := make(map[string]interface{})
 
 	cookie, err := c.r.Cookie(name)
@@ -127,7 +130,7 @@ func (c *Context) get(name string) map[string]interface{} {
 }
 
 // Get gets the value associated with the given key from the session.
-func (c *Context) Get(key string) string {
+func (c *context) Get(key string) string {
 	values := c.get(sessionCookieName)
 
 	value, ok := values[key]
@@ -144,7 +147,7 @@ func (c *Context) Get(key string) string {
 }
 
 // GetInt64 gets the value associated with the given key from the session.
-func (c *Context) GetInt64(key string) int64 {
+func (c *context) GetInt64(key string) int64 {
 	values := c.get(sessionCookieName)
 
 	value, ok := values[key]
@@ -161,7 +164,7 @@ func (c *Context) GetInt64(key string) int64 {
 }
 
 // Delete deletes the key and its associated value from the session.
-func (c *Context) Delete(key string) {
+func (c *context) Delete(key string) {
 	cookie, err := c.r.Cookie(sessionCookieName)
 	if err != nil {
 		return
@@ -190,14 +193,14 @@ func (c *Context) Delete(key string) {
 }
 
 // Flash saves a flash message.
-func (c *Context) Flash(level string, message string) {
+func (c *context) Flash(level string, message string) {
 	c.set(flashCookieName, level, message)
 }
 
 // Flashes returns all flash message key value pairs.
 //
 // Flashes is accessible within a template as `{{ flashes }}`.
-func (c *Context) Flashes() map[string]string {
+func (c *context) Flashes() map[string]string {
 	values := make(map[string]interface{})
 	flashes := make(map[string]string)
 
@@ -229,22 +232,22 @@ func (c *Context) Flashes() map[string]string {
 }
 
 // Request returns the HTTP request.
-func (c *Context) Request() *http.Request {
+func (c *context) Request() *http.Request {
 	return c.r
 }
 
 // Header returns the HTTP header for this request.
-func (c *Context) Header() http.Header {
+func (c *context) Header() http.Header {
 	return c.r.Header
 }
 
 // Response returns the HTTP response writer.
-func (c *Context) Response() http.ResponseWriter {
+func (c *context) Response() http.ResponseWriter {
 	return c.w
 }
 
 // IP returns the IP address of the incoming request.
-func (c *Context) IP() string {
+func (c *context) IP() string {
 	if ip := c.r.Header.Get("X-Forwarded-For"); ip != "" {
 		return strings.Split(ip, ", ")[0]
 	}
@@ -256,7 +259,7 @@ func (c *Context) IP() string {
 }
 
 // IsTLS is a helper to check if a request was performed over HTTPS.
-func (c *Context) IsTLS() bool {
+func (c *context) IsTLS() bool {
 	if c.r.TLS != nil {
 		return true
 	}
@@ -270,7 +273,7 @@ func (c *Context) IsTLS() bool {
 // map.
 //
 // v must be a pointer to a map or struct.
-func (c *Context) Params(v interface{}) error {
+func (c *context) Params(v interface{}) error {
 	if err := c.r.ParseForm(); err != nil {
 		return err
 	}
@@ -290,6 +293,45 @@ func (c *Context) Params(v interface{}) error {
 	}
 
 	return mapstructure.WeakDecode(values, v)
+}
+
+// PathParam returns the URL path param with the given name.
+func (c *context) PathParam(name string) string {
+	for i := range c.p {
+		if c.p[i].Key == name {
+			return c.p[i].Value
+		}
+	}
+	return ""
+}
+
+// QueryParam returns the URL query parameter with the given name.
+func (c *context) QueryParam(name string) string {
+	return c.r.URL.Query().Get(name)
+}
+
+// Form returns the form value with the given name.
+func (c *context) Form(name string) string {
+	if err := c.r.ParseForm(); err != nil {
+		return ""
+	}
+
+	return c.r.FormValue(name)
+}
+
+// FormFile returns the multipart form file with the given name.
+func (c *context) FormFile(name string) (*multipart.FileHeader, error) {
+	if err := c.r.ParseForm(); err != nil {
+		return nil, err
+	}
+
+	f, fh, err := c.r.FormFile(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return fh, nil
 }
 
 func parseTemplates(dir string) map[string]*template.Template {
@@ -356,13 +398,13 @@ func parseTemplates(dir string) map[string]*template.Template {
 }
 
 // String writes a string.
-func (c *Context) String(s string) error {
+func (c *context) String(s string) error {
 	_, err := c.w.Write([]byte(s))
 	return err
 }
 
 // Render renders the HTML template with the given data, if any.
-func (c *Context) Render(status int, name string, data interface{}) error {
+func (c *context) Render(status int, name string, data interface{}) error {
 	tmpl, ok := c.t[name]
 	if !ok {
 		return errors.New(`template "` + name + `" is not defined`)
@@ -383,7 +425,7 @@ func (c *Context) Render(status int, name string, data interface{}) error {
 
 // Redirect issues a 302 redirect. If a flash message is provided, the first
 // string is the flash key, and the second is the value.
-func (c *Context) Redirect(url string, flash ...string) error {
+func (c *context) Redirect(url string, flash ...string) error {
 	key := ""
 	value := ""
 

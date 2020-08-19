@@ -22,9 +22,10 @@ type App struct {
 	cookie    *securecookie.SecureCookie
 
 	// App specific dependencies.
-	middleware []func(http.Handler) http.Handler
-	router     *httprouter.Router
-	routes     map[string]route
+	errorHandler func(err error, c Context)
+	middleware   []func(http.Handler) http.Handler
+	router       *httprouter.Router
+	routes       map[string]route
 }
 
 // A Config is used to configure an App.
@@ -69,56 +70,64 @@ func (a *App) Start(addr string) error {
 
 // handle registers the given handler to handle requests at the given path
 // with the given verb.
-func (a *App) handle(verb, path string, handle func(c *Context) error) {
+func (a *App) handle(verb, path string, handle func(c Context) error) {
 	r := parseRoute(verb, path)
 	a.routes[r.prefix] = r
 
 	a.router.Handle(verb, path, httprouter.Handle(func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-		if err := handle(&Context{
+		c := &context{
 			w: w,
 			r: r,
 			t: a.templates,
 			p: Params(ps),
 			s: a.cookie,
-		}); err != nil {
-			panic(err)
+		}
+
+		if err := handle(c); err != nil {
+			a.errorHandler(err, c)
 		}
 	}))
 }
 
 // Head routes HEAD requests to the given path.
-func (a *App) Head(path string, handle func(c *Context) error) {
+func (a *App) Head(path string, handle func(c Context) error) {
 	a.handle("HEAD", path, handle)
 }
 
 // Options routes OPTIONS requests to the given path.
-func (a *App) Options(path string, handle func(c *Context) error) {
+func (a *App) Options(path string, handle func(c Context) error) {
 	a.handle("OPTIONS", path, handle)
 }
 
 // Get routes GET requests to the given path.
-func (a *App) Get(path string, handle func(c *Context) error) {
+func (a *App) Get(path string, handle func(c Context) error) {
 	a.handle("GET", path, handle)
 }
 
 // Post routes POST requests to the given path.
-func (a *App) Post(path string, handle func(c *Context) error) {
+func (a *App) Post(path string, handle func(c Context) error) {
 	a.handle("POST", path, handle)
 }
 
 // Put routes PUT requests to the given path.
-func (a *App) Put(path string, handle func(c *Context) error) {
+func (a *App) Put(path string, handle func(c Context) error) {
 	a.handle("PUT", path, handle)
 }
 
 // Patch routes PATCH requests to the given path.
-func (a *App) Patch(path string, handle func(c *Context) error) {
+func (a *App) Patch(path string, handle func(c Context) error) {
 	a.handle("GET", path, handle)
 }
 
 // Delete routes DELETE requests to the given path.
-func (a *App) Delete(path string, handle func(c *Context) error) {
+func (a *App) Delete(path string, handle func(c Context) error) {
 	a.handle("GET", path, handle)
+}
+
+// ErrorHandler registers the given function as a global error handler. The
+// error will never be nil.
+func (a *App) ErrorHandler(errFn func(err error, c Context)) {
+	a.errorHandler = errFn
 }
 
 // Routes returns a human readable string containing all routes.
