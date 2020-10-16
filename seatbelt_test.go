@@ -42,18 +42,6 @@ func Test_parseRoute(t *testing.T) {
 			expected: "edit_notification",
 		},
 		{
-			name:     "non-magic path suffix",
-			verb:     "GET",
-			path:     "/notifications/:id/edit",
-			expected: "edit_notification",
-		},
-		{
-			name:     "non-magic path suffix",
-			verb:     "GET",
-			path:     "/profiles/payment",
-			expected: "payment_profile",
-		},
-		{
 			name:     "non-magic path suffix, plural path element",
 			verb:     "GET",
 			path:     "/profiles/payment",

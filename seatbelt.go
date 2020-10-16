@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/gertd/go-pluralize"
+	"github.com/gorilla/csrf"
 	"github.com/gorilla/securecookie"
 	"github.com/julienschmidt/httprouter"
 )
@@ -26,6 +27,8 @@ type App struct {
 	middleware   []func(http.Handler) http.Handler
 	router       *httprouter.Router
 	routes       map[string]route
+
+	config Config
 }
 
 // A Config is used to configure an App.
@@ -43,29 +46,31 @@ type Config struct {
 }
 
 // New creates a new instance of an App.
-func New(config Config) *App {
-	hash := config.Hash
-	block := config.Block
-
-	if hash == nil {
-		hash = securecookie.GenerateRandomKey(64)
+func New(config *Config) *App {
+	if config.Hash == nil {
+		config.Hash = securecookie.GenerateRandomKey(64)
 	}
-	if block == nil {
-		block = securecookie.GenerateRandomKey(32)
+	if config.Block == nil {
+		config.Block = securecookie.GenerateRandomKey(32)
 	}
 
 	return &App{
 		templates:  parseTemplates(config.Dir),
-		cookie:     securecookie.New(hash, block),
+		cookie:     securecookie.New(config.Hash, config.Block),
 		middleware: make([]func(http.Handler) http.Handler, 0),
-		router:     httprouter.New(),
-		routes:     make(map[string]route),
+		errorHandler: func(err error, c Context) {
+			c.Response().WriteHeader(http.StatusInternalServerError)
+			c.Response().Write([]byte(err.Error()))
+		},
+		router: httprouter.New(),
+		routes: make(map[string]route),
+		config: *config,
 	}
 }
 
 // Start starts the app on the given address.
 func (a *App) Start(addr string) error {
-	return http.ListenAndServe(addr, a.router)
+	return http.ListenAndServe(addr, csrf.Protect(a.config.Block)(a.router))
 }
 
 // handle registers the given handler to handle requests at the given path
@@ -122,6 +127,11 @@ func (a *App) Patch(path string, handle func(c Context) error) {
 // Delete routes DELETE requests to the given path.
 func (a *App) Delete(path string, handle func(c Context) error) {
 	a.handle("GET", path, handle)
+}
+
+// FileServer serves the contents of the given directory at the given path.
+func (a *App) FileServer(path string, dir string) {
+	a.router.ServeFiles(path+"/*filepath", http.Dir(dir))
 }
 
 // ErrorHandler registers the given function as a global error handler. The

@@ -4,21 +4,22 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"io/ioutil"
+	"log"
 	"mime/multipart"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/gorilla/csrf"
 	"github.com/gorilla/securecookie"
 	"github.com/mitchellh/mapstructure"
 )
 
+// A Context is an individual request context.
 type Context interface {
 	// session methods
 	Get(key string) string
@@ -39,7 +40,7 @@ type Context interface {
 	Params(v interface{}) error
 	PathParam(name string) string
 	QueryParam(name string) string
-	Form(name string) string
+	FormValue(name string) string
 	FormFile(name string) (*multipart.FileHeader, error)
 
 	// http response convenience
@@ -70,14 +71,21 @@ type context struct {
 
 // NewTestContext is used to create Contexts for testing. These cannot be used
 // in a real application.
-func NewTestContext(method, path string, body io.Reader, ps Params, t map[string]*template.Template) Context {
+func NewTestContext(w http.ResponseWriter, r *http.Request, ps Params, t ...map[string]*template.Template) Context {
+	var tpl map[string]*template.Template
+	for _, tp := range t {
+		tpl = tp
+	}
+
 	return &context{
-		w: httptest.NewRecorder(),
-		r: httptest.NewRequest("GET", "/", nil),
+		w: w,
+		r: r,
+		p: ps,
 		s: securecookie.New(
 			securecookie.GenerateRandomKey(64),
 			securecookie.GenerateRandomKey(32),
 		),
+		t: tpl,
 	}
 }
 
@@ -86,18 +94,31 @@ func NewTestContext(method, path string, body io.Reader, ps Params, t map[string
 //
 // This serves as a convenience function for saving both session and flash
 // values.
+//
+// ERROR When the cookie hash and block change, it seems like fails to set any
+// new values because it tries to write to the old cookie's hash and block,
+// thus resulting in a silent failure until the next attempt, when the cookie
+// is reset.
+//
+// It seems like we need to create a new cookie if it's hash and block don't
+// match?
 func (c *context) set(name string, key string, value interface{}) {
 	values := make(map[string]interface{})
 
 	cookie, err := c.r.Cookie(name)
 	if err == nil {
-		c.s.Decode(name, cookie.Value, &values)
+		if err := c.s.Decode(name, cookie.Value, &values); err != nil {
+			log.Println("[error] failed to decode cookie:", err)
+		}
 	}
 
 	values[key] = value
 
+	log.Printf("[debug] map is %#v\n", values)
+
 	encoded, err := c.s.Encode(name, values)
 	if err != nil {
+		log.Println("[error] failed to encode cookie:", err)
 		return
 	}
 
@@ -125,7 +146,9 @@ func (c *context) get(name string) map[string]interface{} {
 		return values
 	}
 
-	c.s.Decode(name, cookie.Value, &values)
+	if err := c.s.Decode(name, cookie.Value, &values); err != nil {
+		log.Println("[error] failed to decode cookie in get call:", err)
+	}
 	return values
 }
 
@@ -310,8 +333,8 @@ func (c *context) QueryParam(name string) string {
 	return c.r.URL.Query().Get(name)
 }
 
-// Form returns the form value with the given name.
-func (c *context) Form(name string) string {
+// FormValue returns the form value with the given name.
+func (c *context) FormValue(name string) string {
 	if err := c.r.ParseForm(); err != nil {
 		return ""
 	}
@@ -347,6 +370,9 @@ func parseTemplates(dir string) map[string]*template.Template {
 		Funcs(template.FuncMap{
 			"flashes": func() map[string]string {
 				return make(map[string]string)
+			},
+			"csrf": func() template.HTML {
+				return ""
 			},
 		}).
 		Parse(string(b))
@@ -416,6 +442,9 @@ func (c *context) Render(status int, name string, data interface{}) error {
 	tmpl.Funcs(template.FuncMap{
 		"flashes": func() map[string]string {
 			return flashes
+		},
+		"csrf": func() template.HTML {
+			return csrf.TemplateField(c.r)
 		},
 	})
 

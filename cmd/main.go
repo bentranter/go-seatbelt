@@ -34,7 +34,7 @@ func redirector(c seatbelt.Context) error {
 }
 
 func main() {
-	app := seatbelt.New(seatbelt.Config{
+	app := seatbelt.New(&seatbelt.Config{
 		Dir: "testdata",
 	})
 

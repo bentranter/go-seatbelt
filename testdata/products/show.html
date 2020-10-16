@@ -6,6 +6,8 @@
 
   <h3>Create a new product</h3>
   <form method="POST" action="/products">
+    {{ csrf }}
+
     <label>Name</label>
     <input type="text" name="name"/>
 
