@@ -1,475 +1,125 @@
 package seatbelt
 
 import (
-	"errors"
-	"fmt"
+	sctx "context"
 	"html/template"
-	"io/ioutil"
-	"log"
-	"mime/multipart"
-	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
+	"net/http/httptest"
 
-	"github.com/gorilla/csrf"
-	"github.com/gorilla/securecookie"
-	"github.com/mitchellh/mapstructure"
+	"github.com/go-chi/chi"
+	"github.com/gorilla/sessions"
 )
 
-// A Context is an individual request context.
-type Context interface {
-	// session methods
-	Get(key string) string
-	GetInt64(key string) int64
-	Set(key string, value interface{})
-	Delete(key string)
-
-	// flash methods
-	Flash(level string, message string)
-	Flashes() map[string]string
-
-	// http convenience
-	Request() *http.Request
-	Header() http.Header
-	Response() http.ResponseWriter
-	IsTLS() bool
-	IP() string
-	Params(v interface{}) error
-	PathParam(name string) string
-	QueryParam(name string) string
-	FormValue(name string) string
-	FormFile(name string) (*multipart.FileHeader, error)
-
-	// http response convenience
-	String(s string) error
-	Render(status int, name string, data interface{}) error
-	Redirect(url string, flash ...string) error
-
-	// i18n
-	// T(key string) string
-}
-
-var _ Context = &context{}
-
-const (
-	sessionCookieName = "_seatbelt_session"
-	flashCookieName   = "_seatbelt_flash"
-)
-
-// context contains values present during the lifetime of an HTTP
+// Context contains values present during the lifetime of an HTTP
 // request/response cycle.
+type Context interface {
+	// Request returns the *http.Request for the current Context.
+	Request() *http.Request
+
+	// Response returns the http.ResponseWriter for the current Context.
+	Response() http.ResponseWriter
+
+	// Session returns the session object for the current context.
+	Session() Session
+
+	// Params mass-assigns query, path, and form parameters to the given struct or
+	// map.
+	Params(v interface{}) error
+
+	// FormValue returns the form value with the given name.
+	FormValue(name string) string
+
+	// QueryParam returns the URL query parameter with the given name.
+	QueryParam(name string) string
+
+	// String sends a string response with the given status code.
+	String(code int, s string) error
+
+	// JSON sends a JSON response with the given status code.
+	JSON(code int, v interface{}) error
+
+	// Render renders an HTML template.
+	Render(name string, data interface{}, opts ...RenderOption) error
+
+	// NoContent sends a 204 No Content HTTP response. The returned error will
+	// always be nil.
+	NoContent() error
+
+	// Redirect redirects the to the given url. The returned error will always
+	// be nil.
+	Redirect(url string) error
+}
+
+// context implements the Context interface.
 type context struct {
-	w http.ResponseWriter
-	r *http.Request
-	p Params
-	t map[string]*template.Template
-	s *securecookie.SecureCookie
+	w      http.ResponseWriter
+	r      *http.Request
+	store  sessions.Store
+	render *Renderer
 }
 
-// NewTestContext is used to create Contexts for testing. These cannot be used
-// in a real application.
-func NewTestContext(w http.ResponseWriter, r *http.Request, ps Params, t ...map[string]*template.Template) Context {
-	var tpl map[string]*template.Template
-	for _, tp := range t {
-		tpl = tp
-	}
-
-	return &context{
-		w: w,
-		r: r,
-		p: ps,
-		s: securecookie.New(
-			securecookie.GenerateRandomKey(64),
-			securecookie.GenerateRandomKey(32),
-		),
-		t: tpl,
-	}
-}
-
-// set encodes and saves a value with the given key in the cookie with the
-// given name.
+// A TestContext is used for unit testing Seatbelt handlers.
 //
-// This serves as a convenience function for saving both session and flash
-// values.
-//
-// ERROR When the cookie hash and block change, it seems like fails to set any
-// new values because it tries to write to the old cookie's hash and block,
-// thus resulting in a silent failure until the next attempt, when the cookie
-// is reset.
-//
-// It seems like we need to create a new cookie if it's hash and block don't
-// match?
-func (c *context) set(name string, key string, value interface{}) {
-	values := make(map[string]interface{})
+// A TestContext must be created with `NewTestContext` in order to properly
+// initialize the underlying context instance.
+type TestContext struct {
+	// The underlying context to use in the test.
+	*context
 
-	cookie, err := c.r.Cookie(name)
-	if err == nil {
-		if err := c.s.Decode(name, cookie.Value, &values); err != nil {
-			log.Println("[error] failed to decode cookie:", err)
+	// Underlying in-memory session to use in the test.
+	session *testsession
+
+	ResponseRecorder *httptest.ResponseRecorder
+	Req              *http.Request
+}
+
+// NewTestContext created a new instance of a context suitable for unit
+// testing.
+func NewTestContext(w http.ResponseWriter, r *http.Request, params ...map[string]string) *TestContext {
+	// Set the path parameters, if they are present.
+	//
+	// The only way to do this is to create a new context with a chi route
+	// context on it that has its path params populated. Because on a real
+	// chi mux, the path params are stored in the route context, this is the
+	// only way to mock path params in unit tests.
+	rctx := chi.NewRouteContext()
+	for _, param := range params {
+		for key, val := range param {
+			rctx.URLParams.Add(key, val)
 		}
 	}
+	newCtx := sctx.WithValue(r.Context(), chi.RouteCtxKey, rctx)
 
-	values[key] = value
+	// Force the route context onto the request context.
+	r = r.Clone(newCtx)
 
-	log.Printf("[debug] map is %#v\n", values)
-
-	encoded, err := c.s.Encode(name, values)
-	if err != nil {
-		log.Println("[error] failed to encode cookie:", err)
-		return
-	}
-
-	http.SetCookie(c.w, &http.Cookie{
-		Name:     name,
-		Value:    encoded,
-		Path:     "/",
-		Secure:   c.IsTLS(),
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	})
-}
-
-// Set saves a session value on the given key.
-func (c *context) Set(key string, value interface{}) {
-	c.set(sessionCookieName, key, value)
-}
-
-// get returns the map of key-value pairs in the cookie with the given name.
-func (c *context) get(name string) map[string]interface{} {
-	values := make(map[string]interface{})
-
-	cookie, err := c.r.Cookie(name)
-	if err != nil {
-		return values
-	}
-
-	if err := c.s.Decode(name, cookie.Value, &values); err != nil {
-		log.Println("[error] failed to decode cookie in get call:", err)
-	}
-	return values
-}
-
-// Get gets the value associated with the given key from the session.
-func (c *context) Get(key string) string {
-	values := c.get(sessionCookieName)
-
-	value, ok := values[key]
-	if !ok {
-		return ""
-	}
-
-	str, ok := value.(string)
-	if !ok {
-		return ""
-	}
-
-	return str
-}
-
-// GetInt64 gets the value associated with the given key from the session.
-func (c *context) GetInt64(key string) int64 {
-	values := c.get(sessionCookieName)
-
-	value, ok := values[key]
-	if !ok {
-		return 0
-	}
-
-	i, ok := value.(int64)
-	if !ok {
-		return 0
-	}
-
-	return i
-}
-
-// Delete deletes the key and its associated value from the session.
-func (c *context) Delete(key string) {
-	cookie, err := c.r.Cookie(sessionCookieName)
-	if err != nil {
-		return
-	}
-
-	values := make(map[string]interface{})
-	if err := c.s.Decode(sessionCookieName, cookie.Value, &values); err != nil {
-		return
-	}
-
-	delete(values, key)
-
-	encoded, err := c.s.Encode(sessionCookieName, values)
-	if err != nil {
-		return
-	}
-
-	http.SetCookie(c.w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    encoded,
-		Path:     "/",
-		Secure:   c.IsTLS(),
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	})
-}
-
-// Flash saves a flash message.
-func (c *context) Flash(level string, message string) {
-	c.set(flashCookieName, level, message)
-}
-
-// Flashes returns all flash message key value pairs.
-//
-// Flashes is accessible within a template as `{{ flashes }}`.
-func (c *context) Flashes() map[string]string {
-	values := make(map[string]interface{})
-	flashes := make(map[string]string)
-
-	cookie, err := c.r.Cookie(flashCookieName)
-	if err != nil {
-		return flashes
-	}
-
-	if err := c.s.Decode(flashCookieName, cookie.Value, &values); err != nil {
-		return flashes
-	}
-
-	for k, v := range values {
-		flashes[k] = v.(string)
-	}
-
-	http.SetCookie(c.w, &http.Cookie{
-		Name:     flashCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		Expires:  time.Unix(1, 0),
-		Secure:   c.IsTLS(),
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	})
-
-	return flashes
-}
-
-// Request returns the HTTP request.
-func (c *context) Request() *http.Request {
-	return c.r
-}
-
-// Header returns the HTTP header for this request.
-func (c *context) Header() http.Header {
-	return c.r.Header
-}
-
-// Response returns the HTTP response writer.
-func (c *context) Response() http.ResponseWriter {
-	return c.w
-}
-
-// IP returns the IP address of the incoming request.
-func (c *context) IP() string {
-	if ip := c.r.Header.Get("X-Forwarded-For"); ip != "" {
-		return strings.Split(ip, ", ")[0]
-	}
-	if ip := c.r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	ra, _, _ := net.SplitHostPort(c.r.RemoteAddr)
-	return ra
-}
-
-// IsTLS is a helper to check if a request was performed over HTTPS.
-func (c *context) IsTLS() bool {
-	if c.r.TLS != nil {
-		return true
-	}
-	if strings.ToLower(c.r.Header.Get("X-Forwarded-Proto")) == "https" {
-		return true
-	}
-	return false
-}
-
-// Params mass-assigns query, path, and form parameters to the given struct or
-// map.
-//
-// v must be a pointer to a map or struct.
-func (c *context) Params(v interface{}) error {
-	if err := c.r.ParseForm(); err != nil {
-		return err
-	}
-
-	// mapstructure doesn't like the map[string][]string that the form data is
-	// in, so turn it into a map[string]string.
-	values := make(map[string]interface{})
-	for k, v := range c.r.Form {
-		values[k] = strings.Join(v, "")
-	}
-
-	// Overwrite any form values with path params.
-	for _, ps := range c.p {
-		if _, ok := values[ps.Key]; ok {
-			values[ps.Key] = ps.Value
-		}
-	}
-
-	return mapstructure.WeakDecode(values, v)
-}
-
-// PathParam returns the URL path param with the given name.
-func (c *context) PathParam(name string) string {
-	for i := range c.p {
-		if c.p[i].Key == name {
-			return c.p[i].Value
-		}
-	}
-	return ""
-}
-
-// QueryParam returns the URL query parameter with the given name.
-func (c *context) QueryParam(name string) string {
-	return c.r.URL.Query().Get(name)
-}
-
-// FormValue returns the form value with the given name.
-func (c *context) FormValue(name string) string {
-	if err := c.r.ParseForm(); err != nil {
-		return ""
-	}
-
-	return c.r.FormValue(name)
-}
-
-// FormFile returns the multipart form file with the given name.
-func (c *context) FormFile(name string) (*multipart.FileHeader, error) {
-	if err := c.r.ParseForm(); err != nil {
-		return nil, err
-	}
-
-	f, fh, err := c.r.FormFile(name)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	return fh, nil
-}
-
-func parseTemplates(dir string) map[string]*template.Template {
-	b, err := ioutil.ReadFile(filepath.Join(dir, "layout.html"))
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	templates := make(map[string]*template.Template)
-
-	layout, err := template.New("layout").
-		Funcs(template.FuncMap{
-			"flashes": func() map[string]string {
-				return make(map[string]string)
-			},
-			"csrf": func() template.HTML {
-				return ""
-			},
-		}).
-		Parse(string(b))
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	if err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		// Fix same-extension-dirs bug: some dir might be named to:
-		// "users.tmpl", "local.html". These dirs should be excluded as they
-		// are not valid golang templates, but files under them should be
-		// treat as normal. If is a dir, return immediately (dir is not a
-		// valid golang template).
-		if info == nil || info.IsDir() {
-			return nil
-		}
-
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-
-		ext := ""
-		if strings.Index(rel, ".") != -1 {
-			ext = filepath.Ext(rel)
-		}
-
-		buf, err := ioutil.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		name := (rel[0 : len(rel)-len(ext)])
-
-		tmpl, err := template.Must(layout.Clone()).Parse(string(buf))
-		if err != nil {
-			return err
-		}
-
-		templates[filepath.ToSlash(name)] = tmpl
-		return nil
-	}); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
-	return templates
-}
-
-// String writes a string.
-func (c *context) String(s string) error {
-	_, err := c.w.Write([]byte(s))
-	return err
-}
-
-// Render renders the HTML template with the given data, if any.
-func (c *context) Render(status int, name string, data interface{}) error {
-	tmpl, ok := c.t[name]
-	if !ok {
-		return errors.New(`template "` + name + `" is not defined`)
-	}
-
-	flashes := c.Flashes()
-
-	// Override previous func map because Go's templates are weird.
-	tmpl.Funcs(template.FuncMap{
-		"flashes": func() map[string]string {
-			return flashes
+	tc := &TestContext{
+		context: &context{
+			w: w,
+			r: r,
 		},
-		"csrf": func() template.HTML {
-			return csrf.TemplateField(c.r)
+		Req: r,
+		session: &testsession{
+			kv: make(map[string]interface{}),
 		},
-	})
+	}
 
-	c.w.WriteHeader(status)
-	return tmpl.ExecuteTemplate(c.w, "layout", data)
+	if rr, ok := w.(*httptest.ResponseRecorder); ok {
+		tc.ResponseRecorder = rr
+	}
+
+	return tc
 }
 
-// Redirect issues a 302 redirect. If a flash message is provided, the first
-// string is the flash key, and the second is the value.
-func (c *context) Redirect(url string, flash ...string) error {
-	key := ""
-	value := ""
+// AddRenderer adds an instance of a template renderer to a test context
+// instance.
+func (tc *TestContext) AddRenderer(dir string, funcs template.FuncMap) {
+	tc.context.render = NewRenderer(dir, false, funcs)
+}
 
-	for i, f := range flash {
-		if i%2 == 0 {
-			key = f
-		} else {
-			value = f
-		}
-	}
-
-	if key != "" && value != "" {
-		c.Flash(key, value)
-	}
-
-	http.Redirect(c.w, c.r, url, http.StatusFound)
-	return nil
+// Session returns a mock session instance, to be used for unit testing.
+//
+// This overrides the underlying context's session storage.
+func (tc *TestContext) Session() Session {
+	return tc.session
 }
