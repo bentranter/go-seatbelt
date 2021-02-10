@@ -1,0 +1,7 @@
+{{ define "title" }}Index Title{{ end }}
+
+{{ define "main" }}
+  {{ template "home/partial" . }}
+  <h1>Home</h1>
+  <form>{{ csrf }}</form>
+{{ end }}
