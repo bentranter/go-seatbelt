@@ -2,6 +2,7 @@ package seatbelt
 
 import (
 	"encoding/hex"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -28,11 +29,15 @@ import (
 //	}
 //	srv.ListenAndServe()
 type App struct {
-	store      sessions.Store
-	mux        chi.Router
-	render     *Renderer
-	signingKey []byte
+	store       sessions.Store
+	mux         chi.Router
+	render      *Renderer
+	signingKey  []byte
+	middlewares []MiddlewareFunc
 }
+
+// MiddlewareFunc is the type alias for Seatbelt middleware.
+type MiddlewareFunc func(func(Context) error) func(Context) error
 
 // An Option is used to configure a Seatbelt application.
 type Option struct {
@@ -70,8 +75,16 @@ func New(opts ...Option) *App {
 
 	// Set secure defaults for the session cookie store.
 	cookieStore.Options.HttpOnly = true
-	cookieStore.Options.SameSite = http.SameSiteStrictMode
-	cookieStore.Options.Secure = true
+	cookieStore.Options.SameSite = http.SameSiteLaxMode
+
+	// TODO:
+	//
+	// Here we're assuming the reload value means that we're not in
+	// development.
+	//
+	// This is typically true, but the environment value should be passed down
+	// instead.
+	cookieStore.Options.Secure = !opt.Reload
 
 	// Initialize the underlying chi mux so that we can setup our default
 	// middleware stack.
@@ -99,9 +112,50 @@ func (a *App) Start(addr string) error {
 	return http.ListenAndServe(addr, a)
 }
 
-// Use registers standard HTTP middleware on the application.
-func (a *App) Use(middleware ...func(http.Handler) http.Handler) {
+// UseStd registers standard HTTP middleware on the application.
+func (a *App) UseStd(middleware ...func(http.Handler) http.Handler) {
 	a.mux.Use(middleware...)
+}
+
+// Use registers Seatbelt HTTP middleware on the application.
+func (a *App) Use(middleware ...MiddlewareFunc) {
+	a.middlewares = append(a.middlewares, middleware...)
+}
+
+// ErrorHandler is the globally registered error handler.
+func (a *App) ErrorHandler(c Context, err error) {
+	fmt.Printf("hit error handler: %#v\n", err)
+
+	switch c.Request().Method {
+	case "GET", "HEAD", "OPTIONS":
+		c.String(http.StatusInternalServerError, err.Error())
+	default:
+		from := c.Request().Referer()
+		c.Session().Flash(err.Error())
+		c.Redirect(from)
+	}
+}
+
+// serveContext creates and registers a Seatbelt handler for an HTTP request.
+func (a *App) serveContext(w http.ResponseWriter, r *http.Request, handle func(c Context) error) {
+	c := &context{w: w, r: r, store: a.store, render: a.render}
+
+	// Iterate over the middleware in reverse order, so that the order
+	// in which middleware is registered suggests that it is run from
+	// the outermost (or leftmost) function to the innermost (or
+	// rightmost) function.
+	//
+	// This means if you register two middlewares like,
+	//	app.Use(m1, m2)
+	// It will run as:
+	//	m1->m2->handler->m2 returned->m1 returned.
+	for i := len(a.middlewares) - 1; i >= 0; i-- {
+		handle = a.middlewares[i](handle)
+	}
+
+	if err := handle(c); err != nil {
+		a.ErrorHandler(c, err)
+	}
 }
 
 // handle registers the given handler to handle requests at the given path
@@ -110,65 +164,37 @@ func (a *App) handle(verb, path string, handle func(c Context) error) {
 	switch verb {
 	case "HEAD":
 		a.mux.Head(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c := &context{w: w, r: r, store: a.store, render: a.render}
-			if err := handle(c); err != nil {
-				log.Printf("seatbelt: error in HTTP handler: %+v", err)
-				c.w.Write([]byte(err.Error()))
-			}
+			a.serveContext(w, r, handle)
 		}))
 
 	case "OPTIONS":
 		a.mux.Options(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c := &context{w: w, r: r, store: a.store, render: a.render}
-			if err := handle(c); err != nil {
-				log.Printf("seatbelt: error in HTTP handler: %+v", err)
-				c.w.Write([]byte(err.Error()))
-			}
+			a.serveContext(w, r, handle)
 		}))
 
 	case "GET":
 		a.mux.Get(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c := &context{w: w, r: r, store: a.store, render: a.render}
-			if err := handle(c); err != nil {
-				log.Printf("seatbelt: error in HTTP handler: %+v", err)
-				c.w.Write([]byte(err.Error()))
-			}
+			a.serveContext(w, r, handle)
 		}))
 
 	case "POST":
 		a.mux.Post(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c := &context{w: w, r: r, store: a.store, render: a.render}
-			if err := handle(c); err != nil {
-				log.Printf("seatbelt: error in HTTP handler: %+v", err)
-				c.w.Write([]byte(err.Error()))
-			}
+			a.serveContext(w, r, handle)
 		}))
 
 	case "PUT":
 		a.mux.Put(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c := &context{w: w, r: r, store: a.store, render: a.render}
-			if err := handle(c); err != nil {
-				log.Printf("seatbelt: error in HTTP handler: %+v", err)
-				c.w.Write([]byte(err.Error()))
-			}
+			a.serveContext(w, r, handle)
 		}))
 
 	case "PATCH":
 		a.mux.Patch(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c := &context{w: w, r: r, store: a.store, render: a.render}
-			if err := handle(c); err != nil {
-				log.Printf("seatbelt: error in HTTP handler: %+v", err)
-				c.w.Write([]byte(err.Error()))
-			}
+			a.serveContext(w, r, handle)
 		}))
 
 	case "DELETE":
 		a.mux.Delete(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			c := &context{w: w, r: r, store: a.store, render: a.render}
-			if err := handle(c); err != nil {
-				log.Printf("seatbelt: error in HTTP handler: %+v", err)
-				c.w.Write([]byte(err.Error()))
-			}
+			a.serveContext(w, r, handle)
 		}))
 
 	default:

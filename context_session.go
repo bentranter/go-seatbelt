@@ -17,6 +17,12 @@ type Session interface {
 
 	// Reset clears and deletes the session.
 	Reset()
+
+	// Flash sets a flash value.
+	Flash(value interface{})
+
+	// Flashes returns all flash messages.
+	Flashes() []interface{}
 }
 
 func (c *context) Session() Session {
@@ -76,6 +82,21 @@ func (s *session) Reset() {
 	session.Save(s.r, s.w)
 }
 
+// Flash adds a flash message.
+func (s *session) Flash(value interface{}) {
+	session := s.session()
+	session.AddFlash(value)
+	session.Save(s.r, s.w)
+}
+
+// Flashes returns flash values.
+func (s *session) Flashes() []interface{} {
+	session := s.session()
+	flashes := session.Flashes()
+	session.Save(s.r, s.w)
+	return flashes
+}
+
 // testsession implements a test session object that does not require an HTTP
 // request/response cycle to be used. Instead, it uses a map. This should be
 // used when writing unit tests.
@@ -93,4 +114,21 @@ func (ts *testsession) Put(key string, v interface{}) {
 
 func (ts *testsession) Reset() {
 	ts.kv = make(map[string]interface{})
+}
+
+func (ts *testsession) Flash(value interface{}) {
+	var flashes []interface{}
+	if v, ok := ts.kv["_flash"]; ok {
+		flashes = v.([]interface{})
+	}
+	ts.kv["_flash"] = append(flashes, value)
+}
+
+func (ts *testsession) Flashes() []interface{} {
+	var flashes []interface{}
+	if v, ok := ts.kv["_flash"]; ok {
+		delete(ts.kv, "_flash")
+		flashes = v.([]interface{})
+	}
+	return flashes
 }
