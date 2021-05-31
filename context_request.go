@@ -78,6 +78,11 @@ func (c *context) Request() *http.Request {
 	return c.r
 }
 
+// PathParam returns the path param with the given name.
+func (c *context) PathParam(name string) string {
+	return chi.URLParam(c.r, name)
+}
+
 // FormValue returns the form value with the given name.
 func (c *context) FormValue(name string) string {
 	return c.r.FormValue(name)

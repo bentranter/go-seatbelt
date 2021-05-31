@@ -29,6 +29,9 @@ type Context interface {
 	// FormValue returns the form value with the given name.
 	FormValue(name string) string
 
+	// PathParam returns the path parameter with the given name.
+	PathParam(name string) string
+
 	// QueryParam returns the URL query parameter with the given name.
 	QueryParam(name string) string
 

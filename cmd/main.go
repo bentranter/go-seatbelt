@@ -7,11 +7,11 @@ import (
 )
 
 func handle(c seatbelt.Context) error {
-	return c.Render(200, "index", nil)
+	return c.Render("index", nil)
 }
 
 func products(c seatbelt.Context) error {
-	return c.Render(200, "products/show", nil)
+	return c.Render("products/show", nil)
 }
 
 type product struct {
@@ -26,28 +26,22 @@ func newProduct(c seatbelt.Context) error {
 		return err
 	}
 
-	return c.Render(201, "products/new", p)
+	return c.Render("products/new", p)
 }
 
 func redirector(c seatbelt.Context) error {
-	return c.Redirect("/", "message", "You've been redirected")
+	return c.Redirect("/")
 }
 
 func main() {
-	app := seatbelt.New(&seatbelt.Config{
-		Dir: "testdata",
+	app := seatbelt.New(seatbelt.Option{
+		TemplateDir: "testdata",
 	})
 
 	app.Get("/", handle)
 	app.Get("/products", products)
 	app.Post("/products", newProduct)
 	app.Get("/redirect", redirector)
-
-	app.ErrorHandler(func(err error, c seatbelt.Context) {
-		if err := c.String(err.Error()); err != nil {
-			log.Println("failed to write response", err)
-		}
-	})
 
 	log.Fatalln(app.Start(":3000"))
 }
