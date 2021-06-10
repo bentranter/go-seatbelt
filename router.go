@@ -77,6 +77,10 @@ func New(opts ...Option) *App {
 	cookieStore.Options.HttpOnly = true
 	cookieStore.Options.SameSite = http.SameSiteLaxMode
 
+	// Force a consistent path for browsers that are sensitive to this during
+	// AJAX requests.
+	cookieStore.Options.Path = "/"
+
 	// TODO:
 	//
 	// Here we're assuming the reload value means that we're not in
