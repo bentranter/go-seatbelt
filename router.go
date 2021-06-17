@@ -75,7 +75,10 @@ func New(opts ...Option) *App {
 
 	// Set secure defaults for the session cookie store.
 	cookieStore.Options.HttpOnly = true
-	cookieStore.Options.SameSite = http.SameSiteLaxMode
+	// TODO (One day, when it's better supported) Change the default back to
+	// SameSite="Lax". Right now it appears to cause unexpectd behaviour in the
+	// embedded WebKit browser in some iOS apps, especially ones that haven't
+	// kept up to date with updates.
 
 	// Force a consistent path for browsers that are sensitive to this during
 	// AJAX requests.
