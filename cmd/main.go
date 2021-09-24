@@ -1,13 +1,16 @@
 package main
 
 import (
+	"html/template"
 	"log"
+	"strings"
 
 	"github.com/bentranter/go-seatbelt"
 )
 
 func handle(c seatbelt.Context) error {
-	return c.Render("index", nil)
+	c.Session().Put("key", "value")
+	return c.Render("home/index", nil)
 }
 
 func products(c seatbelt.Context) error {
@@ -36,6 +39,9 @@ func redirector(c seatbelt.Context) error {
 func main() {
 	app := seatbelt.New(seatbelt.Option{
 		TemplateDir: "testdata",
+		Funcs: template.FuncMap{
+			"lower": strings.ToLower,
+		},
 	})
 
 	app.Get("/", handle)

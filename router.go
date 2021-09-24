@@ -84,6 +84,10 @@ func New(opts ...Option) *App {
 	// AJAX requests.
 	cookieStore.Options.Path = "/"
 
+	// Default to one year for new cookies, since some browsers don't set
+	// their cookies with the same defaults.
+	cookieStore.Options.MaxAge = 86400 * 365
+
 	// TODO:
 	//
 	// Here we're assuming the reload value means that we're not in
