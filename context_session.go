@@ -53,6 +53,11 @@ func (s *session) session() *sessions.Session {
 
 // Get returns the value for the given key, if one exists.
 func (s *session) Get(key string) interface{} {
+	if s.session() == nil {
+		fmt.Printf("underlying session is nil with key %s\n", key)
+		return nil
+	}
+
 	v, ok := s.session().Values[key]
 	if !ok {
 		fmt.Printf("no value exists for key %s\n", key)
