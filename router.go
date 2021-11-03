@@ -29,11 +29,12 @@ import (
 //	}
 //	srv.ListenAndServe()
 type App struct {
-	store       sessions.Store
-	mux         chi.Router
-	render      *Renderer
-	signingKey  []byte
-	middlewares []MiddlewareFunc
+	store        sessions.Store
+	mux          chi.Router
+	render       *Renderer
+	signingKey   []byte
+	middlewares  []MiddlewareFunc
+	errorHandler func(c Context, err error)
 }
 
 // MiddlewareFunc is the type alias for Seatbelt middleware.
@@ -133,8 +134,21 @@ func (a *App) Use(middleware ...MiddlewareFunc) {
 	a.middlewares = append(a.middlewares, middleware...)
 }
 
+// SetErrorHandler allows you to set a custom error handler that runs when an
+// error is returned from an HTTP handler.
+func (a *App) SetErrorHandler(fn func(c Context, err error)) {
+	a.errorHandler = fn
+}
+
 // ErrorHandler is the globally registered error handler.
+//
+// You can override this function using `SetErrorHandler`.
 func (a *App) ErrorHandler(c Context, err error) {
+	if a.errorHandler != nil {
+		a.errorHandler(c, err)
+		return
+	}
+
 	fmt.Printf("hit error handler: %#v\n", err)
 
 	switch c.Request().Method {
@@ -142,7 +156,7 @@ func (a *App) ErrorHandler(c Context, err error) {
 		c.String(http.StatusInternalServerError, err.Error())
 	default:
 		from := c.Request().Referer()
-		c.Session().Flash(err.Error())
+		c.Session().Flash("alert", err.Error())
 		c.Redirect(from)
 	}
 }
@@ -162,6 +176,12 @@ func (a *App) serveContext(w http.ResponseWriter, r *http.Request, handle func(c
 	//	m1->m2->handler->m2 returned->m1 returned.
 	for i := len(a.middlewares) - 1; i >= 0; i-- {
 		handle = a.middlewares[i](handle)
+	}
+
+	// Add a default template method for accessing all of the flash messages
+	// in order to make it easier to render them from any template.
+	c.render.funcs["flashes"] = func() map[string]interface{} {
+		return c.Session().Flashes()
 	}
 
 	if err := handle(c); err != nil {
