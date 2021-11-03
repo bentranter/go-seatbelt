@@ -15,14 +15,20 @@ type Session interface {
 	// Put writes a key value pair to the session.
 	Put(key string, value interface{})
 
+	// Del deletes the value with the given key, if one exists.
+	Del(key string)
+
 	// Reset clears and deletes the session.
 	Reset()
 
-	// Flash sets a flash value.
-	Flash(value interface{})
+	// Flash sets a flash message with the given key.
+	Flash(key string, value interface{})
+
+	// GetFlash returns the flash message with the given key.
+	GetFlash(key string) (interface{}, bool)
 
 	// Flashes returns all flash messages.
-	Flashes() []interface{}
+	Flashes() map[string]interface{}
 }
 
 func (c *context) Session() Session {
@@ -78,6 +84,17 @@ func (s *session) Put(key string, v interface{}) {
 	}
 }
 
+// Del deletes a key value pair from the session.
+func (s *session) Del(key string) {
+	session := s.session()
+
+	delete(session.Values, key)
+
+	if err := session.Save(s.r, s.w); err != nil {
+		fmt.Printf("failed to delete from session: %+v\n", err)
+	}
+}
+
 // Reset clears and deletes the session.
 func (s *session) Reset() {
 	session := s.session()
@@ -87,26 +104,77 @@ func (s *session) Reset() {
 	session.Save(s.r, s.w)
 }
 
-// Flash adds a flash message.
-func (s *session) Flash(value interface{}) {
+// Flash adds a flash message with the given key.
+func (s *session) Flash(key string, value interface{}) {
 	session := s.session()
-	session.AddFlash(value)
+
+	var flashMap map[string]interface{}
+
+	// Check if there is an existing flash map before writing to it, so that
+	// we're not overwriting existing flashes within the same context.
+	flashes := session.Flashes()
+	if len(flashes) > 0 {
+		if m, ok := flashes[0].(map[string]interface{}); ok {
+			flashMap = m
+		} else {
+			flashMap = make(map[string]interface{})
+		}
+	} else {
+		flashMap = make(map[string]interface{})
+	}
+
+	flashMap[key] = value
+
+	session.AddFlash(flashMap)
 	session.Save(s.r, s.w)
 }
 
-// Flashes returns flash values.
-func (s *session) Flashes() []interface{} {
+// GetFlash returns the flash message with the given key, if one exists. If
+// one does not, the returned boolean will be false, otherwise it is true.
+//
+// TODO(maybe?): GetFlash will **not** clear the flashes on subsequent
+// requests. You must call `Flashes` to clear the flashes on the next request.
+func (s *session) GetFlash(key string) (interface{}, bool) {
 	session := s.session()
 	flashes := session.Flashes()
+
+	if len(flashes) < 1 {
+		return nil, false
+	}
+
+	flashMap, ok := flashes[0].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+
+	value, ok := flashMap[key]
+	return value, ok
+}
+
+// Flashes returns all flash messages values.
+func (s *session) Flashes() map[string]interface{} {
+	session := s.session()
+	flashes := session.Flashes()
+
+	if len(flashes) < 1 {
+		return nil
+	}
+
+	flashMap, ok := flashes[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
 	session.Save(s.r, s.w)
-	return flashes
+	return flashMap
 }
 
 // testsession implements a test session object that does not require an HTTP
 // request/response cycle to be used. Instead, it uses a map. This should be
 // used when writing unit tests.
 type testsession struct {
-	kv map[string]interface{}
+	kv       map[string]interface{}
+	flashMap map[string]interface{}
 }
 
 func (ts *testsession) Get(key string) interface{} {
@@ -117,23 +185,23 @@ func (ts *testsession) Put(key string, v interface{}) {
 	ts.kv[key] = v
 }
 
+func (ts *testsession) Del(key string) {
+	delete(ts.kv, key)
+}
+
 func (ts *testsession) Reset() {
 	ts.kv = make(map[string]interface{})
 }
 
-func (ts *testsession) Flash(value interface{}) {
-	var flashes []interface{}
-	if v, ok := ts.kv["_flash"]; ok {
-		flashes = v.([]interface{})
-	}
-	ts.kv["_flash"] = append(flashes, value)
+func (ts *testsession) Flash(key string, value interface{}) {
+	ts.flashMap[key] = value
 }
 
-func (ts *testsession) Flashes() []interface{} {
-	var flashes []interface{}
-	if v, ok := ts.kv["_flash"]; ok {
-		delete(ts.kv, "_flash")
-		flashes = v.([]interface{})
-	}
-	return flashes
+func (ts *testsession) GetFlash(key string) (interface{}, bool) {
+	value, ok := ts.flashMap[key]
+	return value, ok
+}
+
+func (ts *testsession) Flashes() map[string]interface{} {
+	return ts.flashMap
 }

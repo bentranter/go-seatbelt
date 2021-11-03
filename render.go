@@ -209,6 +209,13 @@ func (r *Renderer) HTML(w io.Writer, req *http.Request, name string, data interf
 		opt = o
 	}
 
+	// If data is nil, it'll cause panics when trying to render a template that
+	// attempts to access a variable that doesn't exist. To get around that,
+	// ensure that data is always at least an empty map[string]interface{}.
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+
 	if r.reload {
 		if err := r.parseTemplates(); err != nil {
 			return err
