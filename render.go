@@ -80,7 +80,7 @@ func (r *Renderer) parseTemplates() error {
 	htmlTemplateFiles := make([]templateFile, 0)
 	textTemplateFiles := make([]templateFile, 0)
 
-	if err := filepath.Walk(r.dir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(r.dir, func(path string, info os.FileInfo, _ error) error {
 		// Fix same-extension-dirs bug: some dir might be named to:
 		// "users.tmpl", "local.html". These dirs should be excluded as they
 		// are not valid golang templates, but files under them should be
@@ -96,7 +96,7 @@ func (r *Renderer) parseTemplates() error {
 		}
 
 		ext := ""
-		if strings.Index(rel, ".") != -1 {
+		if strings.Contains(rel, ".") {
 			ext = filepath.Ext(rel)
 		}
 		if ext != ".txt" && ext != ".html" {
@@ -109,6 +109,10 @@ func (r *Renderer) parseTemplates() error {
 		}
 
 		name := (rel[0 : len(rel)-len(ext)])
+
+		// On Windows, replace the OS-specific path separator "\" with the
+		// conventional Linux/Mac one.
+		name = strings.Replace(name, `\`, "/", -1)
 
 		// If we're not in the layouts directory, we don't want to parse these
 		// regular templates until we have parsed all layout templates. To
@@ -128,10 +132,32 @@ func (r *Renderer) parseTemplates() error {
 			}
 		}
 
-		// Add used supplied HTML functions, and add our defaults.
+		// Add user supplied HTML functions, and add our defaults.
+		//
+		// These must be checked to see if they've previously been assigned,
+		// or else we risk overwriting the actual implementation of the
+		// function.
+		//
+		// For example, if a function is defined prior to the templates being
+		// parsed, but is then redefined inside the gloabl `serveContext`
+		// handler, we can overwrite the actual implementation on subsequent
+		// calls to this function when reloading is enabled, as this logic
+		// executes once at server startup, but also after template function
+		// assignment.
+		//
+		// Basically, just be careful when changing these. There's probably a
+		// safer way to register these funcs that rely on request specific
+		// data, but this works for now.
 		funcs := r.funcs
-		funcs["csrf"] = func() template.HTML {
-			return ""
+		if _, ok := funcs["csrf"]; !ok {
+			funcs["csrf"] = func() template.HTML {
+				return ""
+			}
+		}
+		if _, ok := funcs["flashes"]; !ok {
+			funcs["flashes"] = func() map[string]interface{} {
+				return nil
+			}
 		}
 
 		if ext == ".html" {
