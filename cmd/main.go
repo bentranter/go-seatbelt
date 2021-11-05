@@ -9,12 +9,7 @@ import (
 )
 
 func handle(c seatbelt.Context) error {
-	c.Session().Put("key", "value")
 	return c.Render("home/index", nil)
-}
-
-func products(c seatbelt.Context) error {
-	return c.Render("products/show", nil)
 }
 
 type product struct {
@@ -23,13 +18,18 @@ type product struct {
 }
 
 func newProduct(c seatbelt.Context) error {
+	return c.Render("products/new", nil)
+}
+
+func createProduct(c seatbelt.Context) error {
 	p := &product{}
 
 	if err := c.Params(p); err != nil {
 		return err
 	}
 
-	return c.Render("products/new", p)
+	c.Session().Flash("notice", "Successfully added product "+p.Name)
+	return c.Redirect("/")
 }
 
 func redirector(c seatbelt.Context) error {
@@ -45,8 +45,8 @@ func main() {
 	})
 
 	app.Get("/", handle)
-	app.Get("/products", products)
-	app.Post("/products", newProduct)
+	app.Get("/products/new", newProduct)
+	app.Post("/products", createProduct)
 	app.Get("/redirect", redirector)
 
 	log.Fatalln(app.Start(":3000"))

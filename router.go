@@ -1,6 +1,7 @@
 package seatbelt
 
 import (
+	"encoding/gob"
 	"encoding/hex"
 	"fmt"
 	"html/template"
@@ -38,7 +39,7 @@ type App struct {
 }
 
 // MiddlewareFunc is the type alias for Seatbelt middleware.
-type MiddlewareFunc func(func(Context) error) func(Context) error
+type MiddlewareFunc func(fn func(ctx Context) error) func(Context) error
 
 // An Option is used to configure a Seatbelt application.
 type Option struct {
@@ -66,6 +67,10 @@ func New(opts ...Option) *App {
 	}
 
 	opt.setDefaults()
+
+	// Register the encoding for map[string]interface{} with gob such that we
+	// can successfully save flash messages in the session.
+	gob.Register(map[string]interface{}{})
 
 	signingKey, err := hex.DecodeString(opt.SigningKey)
 	if err != nil {
