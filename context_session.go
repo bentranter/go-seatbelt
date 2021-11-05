@@ -126,14 +126,14 @@ func (s *session) Flash(key string, value interface{}) {
 	flashMap[key] = value
 
 	session.AddFlash(flashMap)
-	session.Save(s.r, s.w)
+
+	if err := session.Save(s.r, s.w); err != nil {
+		fmt.Printf("seatbelt: failed to save session in Flash(%s, %v): %s\n", key, value, err.Error())
+	}
 }
 
 // GetFlash returns the flash message with the given key, if one exists. If
 // one does not, the returned boolean will be false, otherwise it is true.
-//
-// TODO(maybe?): GetFlash will **not** clear the flashes on subsequent
-// requests. You must call `Flashes` to clear the flashes on the next request.
 func (s *session) GetFlash(key string) (interface{}, bool) {
 	session := s.session()
 	flashes := session.Flashes()
@@ -165,7 +165,10 @@ func (s *session) Flashes() map[string]interface{} {
 		return nil
 	}
 
-	session.Save(s.r, s.w)
+	if err := session.Save(s.r, s.w); err != nil {
+		fmt.Printf("seatbelt: failed to save session in Flashes(): %s\n", err.Error())
+	}
+
 	return flashMap
 }
 

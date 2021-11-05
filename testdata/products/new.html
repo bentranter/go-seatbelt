@@ -1,0 +1,12 @@
+{{ define "title" }}New Product{{ end }}
+
+{{ define "main" }}
+  {{ flashes }}
+  <h1>Add product</h1>
+  <form action="/products" method="POST">
+    {{ csrf }}
+    <input type="text" name="name" placeholder="Name"/>
+    <input type="number" name="price" placeholder="Price"/>
+    <input type="submit" value="Submit"/>
+  </form>
+{{ end }}

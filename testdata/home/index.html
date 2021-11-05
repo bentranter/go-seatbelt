@@ -3,5 +3,7 @@
 {{ define "main" }}
   {{ template "home/partial" . }}
   <h1>Home</h1>
+  {{ flashes }}
+  <a href="/products/new">Add product</a>
   <form>{{ csrf }}</form>
 {{ end }}
