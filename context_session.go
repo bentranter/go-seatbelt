@@ -77,6 +77,15 @@ func (s *session) Get(key string) interface{} {
 func (s *session) Put(key string, v interface{}) {
 	session := s.session()
 
+	if session == nil {
+		fmt.Printf("underlying session is nil for put %s %v\n", key, v)
+		return
+	}
+	if session.Values == nil {
+		fmt.Printf("underlying session map is nil for put %s %v, creating map\n", key, v)
+		session.Values = make(map[interface{}]interface{})
+	}
+
 	session.Values[key] = v
 
 	if err := session.Save(s.r, s.w); err != nil {
