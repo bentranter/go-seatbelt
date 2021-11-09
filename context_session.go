@@ -1,11 +1,16 @@
 package seatbelt
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/gorilla/sessions"
+	"github.com/rs/zerolog/log"
 )
+
+// ErrKeyNotFound occurs when trying to access a value for a key that doesn't
+// exist in the session map.
+var ErrKeyNotFound = errors.New("value not found for key in session")
 
 // A Session is a cookie-backed browser session store.
 type Session interface {
@@ -51,25 +56,19 @@ type session struct {
 func (s *session) session() *sessions.Session {
 	session, err := s.store.Get(s.r, s.name)
 	if err != nil {
-		fmt.Printf("error getting session from store: %+v\n", err)
-		return nil
+		log.Error().Err(err).Msg("failed to get session from store, creating new session")
+		return sessions.NewSession(s.store, s.name)
 	}
 	return session
 }
 
 // Get returns the value for the given key, if one exists.
 func (s *session) Get(key string) interface{} {
-	if s.session() == nil {
-		fmt.Printf("underlying session is nil with key %s\n", key)
-		return nil
-	}
-
 	v, ok := s.session().Values[key]
 	if !ok {
-		fmt.Printf("no value exists for key %s\n", key)
+		log.Warn().Err(ErrKeyNotFound).Str("key", key).Msg("no session value exists for key")
 		return nil
 	}
-
 	return v
 }
 
@@ -77,19 +76,14 @@ func (s *session) Get(key string) interface{} {
 func (s *session) Put(key string, v interface{}) {
 	session := s.session()
 
-	if session == nil {
-		fmt.Printf("underlying session is nil for put %s %v\n", key, v)
-		return
-	}
 	if session.Values == nil {
-		fmt.Printf("underlying session map is nil for put %s %v, creating map\n", key, v)
 		session.Values = make(map[interface{}]interface{})
 	}
 
 	session.Values[key] = v
 
 	if err := session.Save(s.r, s.w); err != nil {
-		fmt.Printf("failed to save session: %+v\n", err)
+		log.Error().Err(err).Msg("failed to save session")
 	}
 }
 
@@ -100,7 +94,7 @@ func (s *session) Del(key string) {
 	delete(session.Values, key)
 
 	if err := session.Save(s.r, s.w); err != nil {
-		fmt.Printf("failed to delete from session: %+v\n", err)
+		log.Error().Err(err).Msg("failed to delete from session")
 	}
 }
 
@@ -137,7 +131,7 @@ func (s *session) Flash(key string, value interface{}) {
 	session.AddFlash(flashMap)
 
 	if err := session.Save(s.r, s.w); err != nil {
-		fmt.Printf("seatbelt: failed to save session in Flash(%s, %v): %s\n", key, value, err.Error())
+		log.Error().Err(err).Str("key", key).Interface("value", value).Msg("failed to save flash in session")
 	}
 }
 
@@ -175,7 +169,7 @@ func (s *session) Flashes() map[string]interface{} {
 	}
 
 	if err := session.Save(s.r, s.w); err != nil {
-		fmt.Printf("seatbelt: failed to save session in Flashes(): %s\n", err.Error())
+		log.Error().Err(err).Msg("failed to save flashes in session")
 	}
 
 	return flashMap
