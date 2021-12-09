@@ -109,7 +109,7 @@ func New(opts ...Option) *App {
 	mux.Use(csrf.Protect(signingKey))
 
 	return &App{
-		mux:        chi.NewRouter(),
+		mux:        mux,
 		store:      cookieStore,
 		render:     NewRenderer(opt.TemplateDir, opt.Reload, opt.Funcs),
 		signingKey: signingKey,

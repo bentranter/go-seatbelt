@@ -67,7 +67,6 @@ func (s *session) Get(key string) interface{} {
 	v, ok := s.session().Values[key]
 	if !ok {
 		log.Warn().Err(ErrKeyNotFound).Str("key", key).Msg("no session value exists for key")
-		return nil
 	}
 	return v
 }
