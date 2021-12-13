@@ -18,7 +18,7 @@ func TestContextSession(t *testing.T) {
 		put = func(c seatbelt.Context) error {
 			msg := c.QueryParam("msg")
 			c.Session().Put("msg", msg)
-			return c.NoContent()
+			return c.String(200, "trying to set cookie")
 		}
 
 		get = func(c seatbelt.Context) error {
@@ -39,7 +39,9 @@ func TestContextSession(t *testing.T) {
 		}
 	)
 
-	app := seatbelt.New()
+	app := seatbelt.New(seatbelt.Option{
+		SkippedCSRFRoutes: []string{"/"},
+	})
 
 	app.Get("/", get)
 	app.Put("/", put)
@@ -70,7 +72,7 @@ func TestContextSession(t *testing.T) {
 		}
 
 		for _, c := range cookies {
-			if c.Name == "_hussle_session" {
+			if c.Name == "_session" {
 				cookie = c
 			}
 		}
@@ -114,7 +116,7 @@ func TestContextSession(t *testing.T) {
 		}
 
 		for _, c := range cookies {
-			if c.Name == "_hussle_session" {
+			if c.Name == "_session" {
 				cookie = c
 			}
 		}

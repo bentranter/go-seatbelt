@@ -30,12 +30,13 @@ import (
 //	}
 //	srv.ListenAndServe()
 type App struct {
-	store        sessions.Store
-	mux          chi.Router
-	render       *Renderer
-	signingKey   []byte
-	middlewares  []MiddlewareFunc
-	errorHandler func(c Context, err error)
+	store             sessions.Store
+	mux               chi.Router
+	render            *Renderer
+	signingKey        []byte
+	skippedCSRFRoutes []string
+	middlewares       []MiddlewareFunc
+	errorHandler      func(c Context, err error)
 }
 
 // MiddlewareFunc is the type alias for Seatbelt middleware.
@@ -43,10 +44,11 @@ type MiddlewareFunc func(fn func(ctx Context) error) func(Context) error
 
 // An Option is used to configure a Seatbelt application.
 type Option struct {
-	TemplateDir string           // The directory where the templates reside.
-	SigningKey  string           // The signing key for the cookie session store.
-	Reload      bool             // Whether or not to reload templates on each request.
-	Funcs       template.FuncMap // HTML functions.
+	TemplateDir       string           // The directory where the templates reside.
+	SigningKey        string           // The signing key for the cookie session store.
+	Reload            bool             // Whether or not to reload templates on each request.
+	SkippedCSRFRoutes []string         // Routes to skip CSRF checks.
+	Funcs             template.FuncMap // HTML functions.
 }
 
 // setDefaults sets the default values for Seatbelt options.
@@ -106,13 +108,32 @@ func New(opts ...Option) *App {
 	// Initialize the underlying chi mux so that we can setup our default
 	// middleware stack.
 	mux := chi.NewRouter()
+	if len(opt.SkippedCSRFRoutes) > 0 {
+		mux.Use(skipCSRF(opt.SkippedCSRFRoutes))
+	}
 	mux.Use(csrf.Protect(signingKey))
 
 	return &App{
-		mux:        mux,
-		store:      cookieStore,
-		render:     NewRenderer(opt.TemplateDir, opt.Reload, opt.Funcs),
-		signingKey: signingKey,
+		skippedCSRFRoutes: opt.SkippedCSRFRoutes,
+		mux:               mux,
+		store:             cookieStore,
+		render:            NewRenderer(opt.TemplateDir, opt.Reload, opt.Funcs),
+		signingKey:        signingKey,
+	}
+}
+
+// skipCSRF skips CSRF checks for any request that is an exact match of one of
+// the given routes.
+func skipCSRF(routes []string) func(http.Handler) http.Handler {
+	return func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, route := range routes {
+				if r.URL.Path == route {
+					r = csrf.UnsafeSkipCheck(r)
+				}
+			}
+			h.ServeHTTP(w, r)
+		})
 	}
 }
 
@@ -282,7 +303,7 @@ func (a *App) FileServer(path string, dir string) {
 	fs := http.StripPrefix(path, http.FileServer(http.Dir(dir)))
 
 	if path != "/" && path[len(path)-1] != '/' {
-		a.mux.Get(path, http.RedirectHandler(path+"/", 301).ServeHTTP)
+		a.mux.Get(path, http.RedirectHandler(path+"/", http.StatusMovedPermanently).ServeHTTP)
 		path += "/"
 	}
 	path += "*"

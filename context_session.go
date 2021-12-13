@@ -1,16 +1,11 @@
 package seatbelt
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gorilla/sessions"
 	"github.com/rs/zerolog/log"
 )
-
-// ErrKeyNotFound occurs when trying to access a value for a key that doesn't
-// exist in the session map.
-var ErrKeyNotFound = errors.New("value not found for key in session")
 
 // A Session is a cookie-backed browser session store.
 type Session interface {
@@ -40,7 +35,7 @@ func (c *context) Session() Session {
 	return &session{
 		r:     c.r,
 		w:     c.w,
-		name:  "_hussle_session",
+		name:  "_session",
 		store: c.store,
 	}
 }
@@ -62,13 +57,10 @@ func (s *session) session() *sessions.Session {
 	return session
 }
 
-// Get returns the value for the given key, if one exists.
+// Get returns the value for the given key, if one exists. If not, it will
+// return nil.
 func (s *session) Get(key string) interface{} {
-	v, ok := s.session().Values[key]
-	if !ok {
-		log.Warn().Err(ErrKeyNotFound).Str("key", key).Msg("no session value exists for key")
-	}
-	return v
+	return s.session().Values[key]
 }
 
 // Put writes a key value pair to the session.

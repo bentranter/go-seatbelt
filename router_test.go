@@ -26,17 +26,19 @@ func TestRouter(t *testing.T) {
 	srv := httptest.NewServer(app)
 	defer srv.Close()
 
-	cases := []string{
+	idempotentCases := []string{
 		"HEAD",
 		"OPTIONS",
 		"GET",
+	}
+	protectedCases := []string{
 		"POST",
 		"PUT",
 		"PATCH",
 		"DELETE",
 	}
 
-	for _, c := range cases {
+	for _, c := range idempotentCases {
 		t.Run(c, func(t *testing.T) {
 			req, err := http.NewRequest(c, srv.URL+"/", nil)
 			if err != nil {
@@ -49,6 +51,23 @@ func TestRouter(t *testing.T) {
 			}
 			if resp.StatusCode != 200 {
 				t.Fatalf("expected 200 but got %d", resp.StatusCode)
+			}
+		})
+	}
+
+	for _, c := range protectedCases {
+		t.Run(c, func(t *testing.T) {
+			req, err := http.NewRequest(c, srv.URL+"/", nil)
+			if err != nil {
+				t.Fatalf("%+v", err)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("%+v for %s", err, c)
+			}
+			if resp.StatusCode != 403 {
+				t.Fatalf("expected 403 but got %d", resp.StatusCode)
 			}
 		})
 	}
